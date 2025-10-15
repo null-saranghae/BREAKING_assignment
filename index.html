@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>과제깨기</title>
+<style>
+  :root { --w:1100px; --h:680px; }
+  body{margin:0;background:#f1f3f7;color:#111;font:16px/1.4 system-ui,Apple SD Gothic Neo,Pretendard,sans-serif;
+       display:flex;flex-direction:column;align-items:center;text-align:center}
+  h2{margin:14px 0 6px}
+  #hud{margin:0 0 6px}
+  .wrap{width:min(100%, var(--w));}
+  canvas{width:100%; height:calc(100% * (var(--h) / var(--w))); background:#fff;border:1px solid #c9d2e0}
+  #msg{margin-top:8px;white-space:pre;text-align:center;color:#333}
+</style>
+<body>
+  <h2>과제깨기 <br>(←/→ 이동, Space 발사/재시작)</h2>
+  <div id="hud">점수: <b id="score">0</b> · 목숨: <b id="lives">3</b></div>
+  <div class="wrap">
+    <canvas id="cv" width="1100" height="680"></canvas>
+  </div>
+  <div id="msg">Space 로 시작</div>
+
+<script>
+(() => {
+  const rowTexts = [
+    " .,  ., 과제아카이브,  ., w3school, CSStutorial, html기초강의,  ., 에디터설치, 깃허브사용법, ., .",
+    "., ., ., ., ., ., ., ., ., .",
+    "1, 시각디자인전공, 22101012, 3, 이재성, gmail.com, github.com, ., 2주차-이재성,3주차-이재성,4주차-이재성,5주차-이재성,",
+    "2, 시각디자인전공, 23101012,  3, 김서우,gmail.com, github.com, ., 2주차-김서우,3주차-김서우,4주차-김서우,5주차-김서우,",
+    "3, 시각디자인전공, 24101012, 2, 박현지, gmail.com, github.com, ., 2주차-박현지,3주차-박현지,4주차-박현지,5주차-박현지,",
+    "4, 시각디자인전공, 21101012, 4, 전승호, gmail.com, github.com, ., 2주차-전승호,3주차-전승호,4주차-전승호,5주차-전승호,",
+    "5, 시각디자인전공, 22124231, 3, 최지원, gmail.com, github.com, ., 2주차-최지원,3주차-최지원,4주차-최지원,5주차-최지원,",
+    "6, 시각디자인전공, 22324012, 4, 임정원, gmail.com, github.com, ., 2주차-임정원,3주차-임정원,4주차-임정원,5주차-임정원,",
+    "7, 시각디자인전공, 22412012,  3, 박성운, gmail.com, github.com, .,2주차-박성운,3주차-박성운,4주차-박성운,5주차-박성운,",
+    "8, 시각디자인전공, 22101034,  2, 최진우,gmail.com, github.com, ., 2주차-최진우,3주차-최진우,4주차-최진우,5주차-최진우,",
+    "9, 시각디자인전공, 22101986, 3, 박현석, gmail.com, github.com, ., 2주차-박현석,3주차-박현석,4주차-박현석,5주차-박현석,",
+    "10, 시각디자인전공, 22102381, 3, 김서진, gmail.com, github.com, .,2주차-김서진,3주차-김서진,4주차-김서진,5주차-김서진,"
+  ];
+  // =========================================
+
+  const cv = document.getElementById('cv'), ct = cv.getContext('2d');
+  const scoreEl = document.getElementById('score'), livesEl = document.getElementById('lives'), msg = document.getElementById('msg');
+
+  // 시트/그리드
+  const COLS = 12, ROWS = 12;
+  const GAP=2, WALL_X=40, WALL_Y=90;
+  const GRID_W = cv.width - WALL_X*2;
+  const GRID_H = 380;
+  const BRICK_W = Math.floor((GRID_W - GAP*(COLS-1)) / COLS);
+  const BRICK_H = Math.floor((GRID_H - GAP*(ROWS-1)) / ROWS);
+
+
+  const PADDLE_W=160, PADDLE_H=118, PADDLE_Y=cv.height-60;
+  const BALL_R=8, BALL_SPEED=5.2; // 느린 속도
+
+  const paddleImg = new Image(); paddleImg.src='error.webp';
+  let paddleReady=false; paddleImg.onload=()=>paddleReady=true;
+
+  // 상태
+  let paddleX, left=false, right=false;
+  let ballX, ballY, vx=0, vy=0, stuck=true;
+  let score=0, lives=3, playing=false;
+  const bricks=[]; // {x,y,alive,text}
+
+  function initLevel(){
+    bricks.length = 0;
+    for(let r=0;r<ROWS;r++){
+      const words = (rowTexts[r]||"").split(/,|\s+/).filter(Boolean); // 쉼표/공백 둘다 허용
+      for(let c=0;c<COLS;c++){
+        const x = WALL_X + c*(BRICK_W+GAP);
+        const y = WALL_Y + r*(BRICK_H+GAP);
+        const text = words.length ? words[c % words.length] : "";
+        bricks.push({x,y,alive:true,text});
+      }
+    }
+  }
+
+  function resetBall(){
+    paddleX=(cv.width-PADDLE_W)/2;
+    ballX=paddleX+PADDLE_W/2;
+    ballY=PADDLE_Y-BALL_R-1;
+    vx=0;vy=0;stuck=true;
+  }
+
+  function start(){
+    if (playing) return;
+    playing = true;
+    msg.textContent = '';
+    score = 0; lives = 3; scoreEl.textContent=0; livesEl.textContent=3;
+    initLevel();
+    resetBall();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function launch(){
+    if (!stuck) return;
+    const dir = ((ballX - (paddleX+PADDLE_W/2)) / (PADDLE_W/2));
+    const angle = (-Math.PI/3) + (dir * Math.PI/6); // -60° ~ -20°
+    vx = BALL_SPEED * Math.cos(angle);
+    vy = BALL_SPEED * Math.sin(angle);
+    stuck = false;
+  }
+
+  function draw(){
+    ct.clearRect(0,0,cv.width,cv.height);
+
+    // 셀(벽돌)
+    bricks.forEach(b=>{
+      if(!b.alive) return;
+      // 줄무늬 느낌
+      ct.fillStyle = (Math.floor((b.y-WALL_Y)/(BRICK_H+GAP))%2===0) ? '#ffffff' : '#f7fafc';
+      ct.fillRect(b.x,b.y,BRICK_W,BRICK_H);
+      ct.strokeStyle='#d8e0ea';
+      ct.strokeRect(b.x+0.5,b.y+0.5,BRICK_W-1,BRICK_H-1);
+      // 텍스트
+      ct.fillStyle='#232b3a';
+      ct.font = '11px system-ui';
+      ct.textAlign='center'; ct.textBaseline='middle';
+     
+      let txt = b.text;
+      if (ct.measureText(txt).width > BRICK_W-8){
+        while (txt.length>0 && ct.measureText(txt+'…').width > BRICK_W-8) txt = txt.slice(0,-1);
+        if (txt !== b.text) txt += '…';
+      }
+      ct.fillText(txt, b.x+BRICK_W/2, b.y+BRICK_H/2);
+    });
+
+    // 패들
+    if (paddleReady) ct.drawImage(paddleImg, paddleX, PADDLE_Y, PADDLE_W, PADDLE_H);
+    else { ct.fillStyle='#0ea5e9'; ct.fillRect(paddleX,PADDLE_Y,PADDLE_W,PADDLE_H); }
+
+    // 공
+    ct.beginPath(); ct.arc(ballX,ballY,BALL_R,0,Math.PI*2);
+    ct.fillStyle='#ef4444'; ct.fill();
+  }
+
+  function paddleMove(){
+    const speed=9;
+    if(left)  paddleX -= speed;
+    if(right) paddleX += speed;
+    paddleX = Math.max(0, Math.min(cv.width-PADDLE_W, paddleX));
+    if(stuck){ ballX=paddleX+PADDLE_W/2; ballY=PADDLE_Y-BALL_R-1; }
+  }
+
+  function collideWalls(){
+    if(ballX-BALL_R<0){ ballX=BALL_R; vx*=-1; }
+    if(ballX+BALL_R>cv.width){ ballX=cv.width-BALL_R; vx*=-1; }
+    if(ballY-BALL_R<0){ ballY=BALL_R; vy*=-1; }
+    if(ballY-BALL_R>cv.height){
+      lives--; livesEl.textContent=lives;
+      if(lives<=0){ gameOver(false); } else { resetBall(); }
+    }
+  }
+
+  function collidePaddle(){
+    if(ballY+BALL_R>=PADDLE_Y &&
+       ballX>=paddleX && ballX<=paddleX+PADDLE_W &&
+       vy>0){
+      ballY=PADDLE_Y-BALL_R;
+      const hit=(ballX-(paddleX+PADDLE_W/2))/(PADDLE_W/2);
+      const angle=(-Math.PI/3)+(hit*Math.PI/3); // -60°~+60°
+      const speed=Math.hypot(vx,vy);
+      vx=speed*Math.sin(angle);
+      vy=-Math.abs(speed*Math.cos(angle));
+    }
+  }
+
+  function collideBricks(){
+    for (const b of bricks){
+      if(!b.alive) continue;
+      if(ballX+BALL_R<b.x || ballX-BALL_R>b.x+BRICK_W ||
+         ballY+BALL_R<b.y || ballY-BALL_R>b.y+BRICK_H) continue;
+
+      // 간단 반사
+      vy *= -1;
+      b.alive = false;
+      score += 10; scoreEl.textContent = score;
+      if (bricks.every(x=>!x.alive)) gameOver(true);
+      break;
+    }
+  }
+
+  function update(){
+    paddleMove();
+    if(!stuck){
+      ballX+=vx; ballY+=vy;
+      collideWalls(); collidePaddle(); collideBricks();
+    }
+  }
+
+  function loop(){
+    if(!playing) return;
+    update(); draw(); requestAnimationFrame(loop);
+  }
+
+  function gameOver(win){
+    playing=false;
+    msg.textContent = win ? '🎉 모든 셀을 삭제했습니다!' : '과제 실패... \nSpace 로 재시작';
+  }
+
+  // 입력
+  addEventListener('keydown', e=>{
+    if(e.repeat) return;
+    if(e.code==='ArrowLeft') left=true;
+    if(e.code==='ArrowRight') right=true;
+    if(e.code==='Space'){
+      if(!playing) start();
+      else if(stuck) launch();
+      else if(!stuck && msg.textContent) start();
+    }
+  });
+  addEventListener('keyup', e=>{
+    if(e.code==='ArrowLeft') left=false;
+    if(e.code==='ArrowRight') right=false;
+  });
+
+  // 첫 화면
+  initLevel(); resetBall(); draw();
+})();
+</script>
+</body>
+</html>
+
